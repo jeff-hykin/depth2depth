@@ -55,6 +55,18 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    /// Scale the model input resolution — the quality/speed knob. 1.0 keeps the
+    /// current size, 0.5 is ~4x faster and coarser, 2.0 is ~4x slower and finer.
+    /// Results snap to the 14-pixel patch grid (minimum 4 patches per side).
+    pub fn with_quality(mut self, quality: f32) -> Self {
+        let snap = |v: usize| ((v as f32 * quality / 14.0).round().max(4.0) as usize) * 14;
+        self.model_h = snap(self.model_h);
+        self.model_w = snap(self.model_w);
+        self
+    }
+}
+
 pub struct Fusion {
     /// Dense metric depth, meters, same resolution as the input.
     pub fused: Vec<f32>,

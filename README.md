@@ -27,7 +27,7 @@ let fusion = d2d.fuse(&rgb, &raw_depth_m, height, width)?;
 // fusion.a, fusion.b: the current affine fit
 ```
 
-`Config` controls the model input resolution (default 280×504, must be multiples of 14 — smaller is faster), the raw-depth trust range (default 0.3–6 m), the agreement tolerance `max(0.3 m, 10%·z)`, and the EMA weight. Call `reset()` on scene cuts.
+`Config` controls the model input resolution (default 280×504, must be multiples of 14 — smaller is faster), the raw-depth trust range (default 0.3–6 m), the agreement tolerance `max(0.3 m, 10%·z)`, and the EMA weight. `Config::default().with_quality(0.5)` scales the model resolution as a single quality/speed knob. Call `reset()` on scene cuts.
 
 ## Model weights
 
