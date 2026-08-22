@@ -87,6 +87,12 @@ pub struct Depth2Depth {
     ema: Option<(f32, f32)>,
 }
 
+// Async module frameworks need the model to cross threads; keep it that way.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Depth2Depth>()
+};
+
 impl Depth2Depth {
     pub fn new(
         dinov2_safetensors: &str,

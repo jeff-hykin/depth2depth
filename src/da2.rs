@@ -5,8 +5,8 @@ use std::sync::Arc;
 use candle::{Module, Result, Tensor};
 use candle_nn::ops::Identity;
 use candle_nn::{
-    conv2d, conv2d_no_bias, conv_transpose2d, seq, Activation, Conv2d, Conv2dConfig,
-    ConvTranspose2dConfig, Sequential, VarBuilder,
+    conv2d, conv2d_no_bias, conv_transpose2d, Conv2d, Conv2dConfig, ConvTranspose2dConfig,
+    VarBuilder,
 };
 
 use crate::dinov2::DinoVisionTransformer;
@@ -116,7 +116,21 @@ pub struct Scratch {
     refine_net3: FeatureFusionBlock,
     refine_net4: FeatureFusionBlock,
     output_conv1: Conv2d,
-    output_conv2: Sequential,
+    output_conv2: OutputConv2,
+}
+
+/// conv - relu - conv - sigmoid; a concrete type because candle_nn::Sequential
+/// boxes `dyn Module` without Send + Sync.
+pub struct OutputConv2 {
+    conv1: Conv2d,
+    conv2: Conv2d,
+}
+
+impl Module for OutputConv2 {
+    fn forward(&self, xs: &Tensor) -> Result<Tensor> {
+        let xs = self.conv1.forward(xs)?.relu()?;
+        candle_nn::ops::sigmoid(&self.conv2.forward(&xs)?)
+    }
 }
 
 impl Scratch {
@@ -168,17 +182,16 @@ impl Scratch {
             vb.pp("output_conv1"),
         )?;
 
-        let output_conv2 = seq()
-            .add(conv2d(
+        let output_conv2 = OutputConv2 {
+            conv1: conv2d(
                 conf.num_features / 2,
                 32,
                 3,
                 conv_cfg,
                 vb.pp("output_conv2").pp("0"),
-            )?)
-            .add(Activation::Relu)
-            .add(conv2d(32, 1, 1, Default::default(), vb.pp("output_conv2").pp("2"))?)
-            .add(Activation::Sigmoid);
+            )?,
+            conv2: conv2d(32, 1, 1, Default::default(), vb.pp("output_conv2").pp("2"))?,
+        };
 
         Ok(Self {
             layer1_rn,
