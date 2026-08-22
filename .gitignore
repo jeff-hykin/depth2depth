@@ -1,0 +1,4 @@
+target
+weights
+*.safetensors
+*.mp4
