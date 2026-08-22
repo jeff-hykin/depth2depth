@@ -13,6 +13,8 @@
 pub mod da2;
 pub mod dinov2;
 
+pub use candle;
+
 use std::sync::Arc;
 
 use candle::{DType, Device, Module, Result, Tensor};
