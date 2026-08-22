@@ -199,7 +199,7 @@ const NUM_CHANNELS: usize = 4;
 
 pub struct DPTHead {
     projections: Vec<Conv2d>,
-    resize_layers: Vec<Box<dyn Module>>,
+    resize_layers: Vec<Box<dyn Module + Send + Sync>>,
     scratch: Scratch,
     input_h: usize,
     input_w: usize,
@@ -220,7 +220,7 @@ impl DPTHead {
             )?);
         }
 
-        let resize_layers: Vec<Box<dyn Module>> = vec![
+        let resize_layers: Vec<Box<dyn Module + Send + Sync>> = vec![
             Box::new(conv_transpose2d(
                 conf.out_channel_sizes[0],
                 conf.out_channel_sizes[0],
