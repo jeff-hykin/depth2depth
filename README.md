@@ -4,27 +4,52 @@ Turn a noisy, hole-riddled metric depth image (RealSense-style stereo depth) int
 
 **RGB**
 
-![RGB](assets/01_rgb.png)
+<img src="assets/01_rgb.png" width="50%">
 
 **Raw depth** — correct, but full of unknowns and outliers (54% of pixels unknown)
 
-![raw depth](assets/02_raw.png)
+<img src="assets/02_raw.png" width="50%">
 
 **Filtered depth** — no outliers, but too much unknown (60% of pixels unknown)
 
-![filtered depth](assets/03_filtered.png)
+<img src="assets/03_filtered.png" width="50%">
 
 **RGB-to-depth ([DepthAnything](https://github.com/DepthAnything/Depth-Anything-V2))** — no unknowns and no outliers, but exaggerated depth (2× too far)
 
-![DepthAnything prediction](assets/04_da2.png)
+<img src="assets/04_da2.png" width="50%">
 
 **Fused** — scale DepthAnything to match the raw depth, then fill in the unknowns
 
-![fused depth](assets/05_fused.png)
+<img src="assets/05_fused.png" width="50%">
 
-Color, raw, fused on the same frame:
+Over a clip — color, raw depth, fused, side by side:
 
-![color, raw, fused](assets/flip.gif)
+![color, raw, fused over a clip](assets/demo.gif)
+
+## Usage
+
+```rust
+use depth2depth::{Config, Depth2Depth};
+use candle_core::{Device, DType};
+
+let mut d2d = Depth2Depth::new(
+    "dinov2_vits14.safetensors",
+    "da2_head_vits.safetensors",
+    Device::cuda_if_available(0)?,
+    DType::F16,
+    Config::default(),
+)?;
+
+// rgb: HxWx3 u8, raw_depth_m: HxW f32 meters (0 / out-of-range = hole)
+let fusion = d2d.fuse(&rgb, &raw_depth_m, height, width)?;
+// fusion.fused: dense HxW f32 meters
+// fusion.kept_raw: which pixels are untouched sensor readings
+// fusion.a, fusion.b: the current affine fit
+```
+
+`Config` controls the model input resolution (default 280×504, must be multiples of 14 — smaller is faster), the raw-depth trust range (default 0.3–6 m), the agreement tolerance `max(0.3 m, 10%·z)`, and the EMA weight. `Config::default().with_quality(0.5)` scales the model resolution as a single quality/speed knob. Call `reset()` on scene cuts.
+
+Pure Rust, no Python and no ONNX runtime at inference time. Inference runs on [candle](https://github.com/huggingface/candle), so the GPU backend is a cargo feature: `cuda` / `cudnn` (NVIDIA, incl. Jetson), `metal` (Apple), or nothing for CPU.
 
 ## The raw depth is mostly missing
 
@@ -62,31 +87,6 @@ Mean absolute error against the sensor's own trusted pixels goes from **1.79 m**
 
 Nothing is smoothed or inpainted into place: real sensor geometry survives byte-for-byte, and holes get a prediction that has been forced to agree with the sensor everywhere it could be checked.
 
-## Usage
-
-```rust
-use depth2depth::{Config, Depth2Depth};
-use candle_core::{Device, DType};
-
-let mut d2d = Depth2Depth::new(
-    "dinov2_vits14.safetensors",
-    "da2_head_vits.safetensors",
-    Device::cuda_if_available(0)?,
-    DType::F16,
-    Config::default(),
-)?;
-
-// rgb: HxWx3 u8, raw_depth_m: HxW f32 meters (0 / out-of-range = hole)
-let fusion = d2d.fuse(&rgb, &raw_depth_m, height, width)?;
-// fusion.fused: dense HxW f32 meters
-// fusion.kept_raw: which pixels are untouched sensor readings
-// fusion.a, fusion.b: the current affine fit
-```
-
-`Config` controls the model input resolution (default 280×504, must be multiples of 14 — smaller is faster), the raw-depth trust range (default 0.3–6 m), the agreement tolerance `max(0.3 m, 10%·z)`, and the EMA weight. `Config::default().with_quality(0.5)` scales the model resolution as a single quality/speed knob. Call `reset()` on scene cuts.
-
-Pure Rust, no Python and no ONNX runtime at inference time. Inference runs on [candle](https://github.com/huggingface/candle), so the GPU backend is a cargo feature: `cuda` / `cudnn` (NVIDIA, incl. Jetson), `metal` (Apple), or nothing for CPU.
-
 ## Model weights
 
 The crate loads two safetensors files converted from the official Depth Anything V2 metric checkpoint (Hypersim indoor, vit-small, `max_depth = 20`):
@@ -100,9 +100,7 @@ Checkpoint download: see the [Depth-Anything-V2 metric_depth page](https://githu
 
 ## Example
 
-`examples/clip.rs` runs the pipeline over a recorded clip and writes a 3-panel video:
-
-![rgb, raw, fused over a clip](assets/demo.gif)
+`examples/clip.rs` runs the pipeline over a recorded clip and writes the 3-panel video at the top of this page:
 
 ```sh
 cargo run --release --features cuda --example clip -- \
