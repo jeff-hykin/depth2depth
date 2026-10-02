@@ -130,6 +130,59 @@ impl Calibration {
         Calibrated { depth, support }
     }
 
+    /// `apply`, but only at the pixels `depth_to_points` reads under `options` (its crop and decimation;
+    /// the rest stay 0): about 1/decimation² of the cost.
+    pub fn apply_for_cloud(
+        &mut self,
+        pred: &[f32],
+        height: usize,
+        width: usize,
+        anchors: &[Anchor],
+        options: &crate::cloud::CloudOptions,
+    ) -> Calibrated {
+        assert_eq!(pred.len(), height * width, "pred must be HxW");
+        let step = options.decimation.max(1);
+        let [x0, y0, x1, y1] = options.roi.unwrap_or([0, 0, width, height]);
+        let (x1, y1) = (x1.min(width), y1.min(height));
+        let anchors = in_image(anchors, height, width);
+        let log_pred: Vec<f32> = pred.iter().map(|&p| p.max(1e-3).ln()).collect();
+        if anchors.len() >= self.config.min_anchors {
+            self.fit_smooth(&anchors, &log_pred, height, width);
+        }
+        let spread = (anchors.len() >= self.config.neighbours)
+            .then(|| Spread::new(self, &anchors, &log_pred, height, width));
+        let (gh, gw) = (
+            y1.saturating_sub(y0).div_ceil(step),
+            x1.saturating_sub(x0).div_ceil(step),
+        );
+        let at = |cell: usize| (x0 + (cell % gw) * step, y0 + (cell / gw) * step);
+        let values: Vec<(f32, f32)> = (0..gh * gw)
+            .into_par_iter()
+            .map(|cell| {
+                let (x, y) = at(cell);
+                let lp = log_pred[y * width + x];
+                let smooth = self.smooth(lp, x, y, height, width);
+                match &spread {
+                    Some(spread) => {
+                        let (field, nearest) = spread.at(x, y, lp);
+                        let w = self.weight(nearest);
+                        (smooth * (w * field).exp(), w)
+                    }
+                    None => (smooth, 0.0),
+                }
+            })
+            .collect();
+        let mut depth = vec![0f32; height * width];
+        let mut support = vec![0f32; height * width];
+        for (cell, (z, w)) in values.into_iter().enumerate() {
+            let (x, y) = at(cell);
+            let i = y * width + x;
+            depth[i] = z;
+            support[i] = w;
+        }
+        Calibrated { depth, support }
+    }
+
     /// What `apply` would give at a few `(column, row)` pixels, without touching the averaged fit:
     /// for choosing extra anchors (a floor, say) before the real `apply`.
     pub fn probe(
@@ -475,6 +528,45 @@ mod tests {
                 "{p} {}",
                 applied.depth[y * W + x]
             );
+        }
+    }
+
+    #[test]
+    fn apply_for_cloud_gives_the_cloud_of_a_full_apply() {
+        let truth = |u: usize, v: usize| 1.0 + (u + v) as f32 * 0.05;
+        let pred: Vec<f32> = (0..H * W)
+            .map(|i| 2.0 * truth(i % W, i / W).powf(0.8))
+            .collect();
+        let anchors = grid_anchors(&truth, 3);
+        let camera = crate::cloud::Pinhole {
+            fx: 60.0,
+            fy: 60.0,
+            cx: 40.0,
+            cy: 30.0,
+        };
+        let calibration = Calibration::new(CalibrationConfig::default());
+        let full = calibration.clone().apply(&pred, H, W, &anchors);
+        for roi in [None, Some([3, 5, 71, 50])] {
+            let options = crate::cloud::CloudOptions {
+                decimation: 8,
+                roi,
+                ..Default::default()
+            };
+            let sparse = calibration
+                .clone()
+                .apply_for_cloud(&pred, H, W, &anchors, &options);
+            let kept = sparse.depth.iter().filter(|&&z| z > 0.0).count();
+            let from_full = full.points(H, W, &camera, &options);
+            let from_sparse = sparse.points(H, W, &camera, &options);
+            assert_eq!(from_sparse.len(), from_full.len());
+            assert_eq!(
+                from_sparse.len(),
+                kept,
+                "every calibrated pixel becomes a point"
+            );
+            for (a, b) in from_sparse.iter().zip(&from_full) {
+                assert!((a[2] - b[2]).abs() < 0.02 * b[2], "{a:?} {b:?}");
+            }
         }
     }
 
