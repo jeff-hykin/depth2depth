@@ -27,12 +27,15 @@ pub use candle;
 #[cfg(feature = "embedded-model")]
 mod embedded {
     #[cfg(feature = "tensorrt")]
-    pub static ONNX: &[u8] =
-        include_bytes!(concat!(env!("OUT_DIR"), "/da2_metric_hypersim_vits_364x448.onnx"));
+    pub static ONNX: &[u8] = include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/da2_metric_hypersim_vits_364x448.onnx"
+    ));
     #[cfg(feature = "tensorrt")]
     pub const ONNX_SHA256: &str = env!("D2D_SHA256_da2_metric_hypersim_vits_364x448_onnx");
     #[cfg(not(feature = "tensorrt"))]
-    pub static DINOV2: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dinov2_vits14.safetensors"));
+    pub static DINOV2: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/dinov2_vits14.safetensors"));
     #[cfg(not(feature = "tensorrt"))]
     pub static HEAD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/da2_head_vits.safetensors"));
 }
@@ -148,9 +151,8 @@ impl Depth2Depth {
         dtype: DType,
         config: Config,
     ) -> Result<Self> {
-        let dino_vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[dinov2_safetensors], dtype, &device)?
-        };
+        let dino_vb =
+            unsafe { VarBuilder::from_mmaped_safetensors(&[dinov2_safetensors], dtype, &device)? };
         let head_vb =
             unsafe { VarBuilder::from_mmaped_safetensors(&[head_safetensors], dtype, &device)? };
         Self::from_safetensors(dino_vb, head_vb, device, dtype, config)
@@ -185,7 +187,8 @@ impl Depth2Depth {
     /// model input size is the export's, whatever `config` says.
     #[cfg(feature = "tensorrt")]
     pub fn new_tensorrt(onnx_path: &str, engine_path: &str, config: Config) -> Result<Self> {
-        let onnx = std::fs::read(onnx_path).map_err(|e| candle::Error::Msg(format!("{onnx_path}: {e}")))?;
+        let onnx = std::fs::read(onnx_path)
+            .map_err(|e| candle::Error::Msg(format!("{onnx_path}: {e}")))?;
         Self::tensorrt_from_onnx(&onnx, engine_path, config)
     }
 
@@ -226,7 +229,11 @@ impl Depth2Depth {
             #[cfg(not(any(feature = "cuda", feature = "metal")))]
             let device = Device::Cpu;
             // candle's CPU f16 is ~3x slower than its f32.
-            let dtype = if device.is_cpu() { DType::F32 } else { DType::F16 };
+            let dtype = if device.is_cpu() {
+                DType::F32
+            } else {
+                DType::F16
+            };
             Self::from_safetensors(
                 VarBuilder::from_slice_safetensors(embedded::DINOV2, dtype, &device)?,
                 VarBuilder::from_slice_safetensors(embedded::HEAD, dtype, &device)?,
@@ -321,8 +328,7 @@ impl Depth2Depth {
         let mut kept_raw = vec![false; raw_depth_m.len()];
         for i in 0..raw_depth_m.len() {
             let keep = valid[i]
-                && (aligned[i] - raw_depth_m[i]).abs()
-                    < cfg.abs_tol.max(cfg.rel_tol * aligned[i]);
+                && (aligned[i] - raw_depth_m[i]).abs() < cfg.abs_tol.max(cfg.rel_tol * aligned[i]);
             kept_raw[i] = keep;
             fused[i] = if keep { raw_depth_m[i] } else { aligned[i] };
         }

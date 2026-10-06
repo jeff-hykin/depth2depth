@@ -1,6 +1,6 @@
 [package]
 name = "depth2depth"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Densify and denoise metric depth images: Depth Anything V2 (via candle) affine-anchored to the trusted parts of a raw sensor depth image, filling holes and outliers"
@@ -23,6 +23,7 @@ sha2 = "0.10"
 [dev-dependencies]
 anyhow = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+mcap = "0.25"
 
 [features]
 # The model files built into the library (see model.json / build.rs); without it, load them by path.

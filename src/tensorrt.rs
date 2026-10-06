@@ -53,12 +53,20 @@ impl TrtDepth {
         }
         let (mut height, mut width) = (0, 0);
         unsafe { d2d_trt_input_size(handle, &mut height, &mut width) };
-        Ok(Self { handle: Mutex::new(Handle(handle)), height: height as usize, width: width as usize })
+        Ok(Self {
+            handle: Mutex::new(Handle(handle)),
+            height: height as usize,
+            width: width as usize,
+        })
     }
 
     /// `input` is the normalised 3xHxW image at the engine's size; returns HxW meters.
     pub fn infer(&self, input: &[f32]) -> Result<Vec<f32>, String> {
-        assert_eq!(input.len(), 3 * self.height * self.width, "input must be 3xHxW at the engine's size");
+        assert_eq!(
+            input.len(),
+            3 * self.height * self.width,
+            "input must be 3xHxW at the engine's size"
+        );
         let mut output = vec![0f32; self.height * self.width];
         let handle = self.handle.lock().unwrap();
         match unsafe { d2d_trt_infer(handle.0, input.as_ptr(), output.as_mut_ptr()) } {

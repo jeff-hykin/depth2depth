@@ -34,7 +34,10 @@ fn fetch_model() {
     };
     for name in names {
         let sha256 = manifest["files"][name].as_str().expect("model.json: files");
-        println!("cargo:rustc-env=D2D_SHA256_{}={sha256}", name.replace(['.', '-'], "_"));
+        println!(
+            "cargo:rustc-env=D2D_SHA256_{}={sha256}",
+            name.replace(['.', '-'], "_")
+        );
         let destination = out_dir.join(name);
         // docs.rs builds without network; the docs don't need the bytes.
         if std::env::var_os("DOCS_RS").is_some() {
@@ -63,11 +66,21 @@ fn fetch_model() {
 fn download(url: &str, destination: &Path) {
     let partial = destination.with_extension("part");
     let status = std::process::Command::new("curl")
-        .args(["--fail", "--location", "--silent", "--show-error", "--retry", "3", "--output"])
+        .args([
+            "--fail",
+            "--location",
+            "--silent",
+            "--show-error",
+            "--retry",
+            "3",
+            "--output",
+        ])
         .arg(&partial)
         .arg(url)
         .status()
-        .unwrap_or_else(|e| panic!("running curl to download {url}: {e} (or set DEPTH2DEPTH_MODEL_DIR)"));
+        .unwrap_or_else(|e| {
+            panic!("running curl to download {url}: {e} (or set DEPTH2DEPTH_MODEL_DIR)")
+        });
     if !status.success() {
         panic!("downloading {url} failed ({status}); set DEPTH2DEPTH_MODEL_DIR to a directory holding the files in model.json");
     }
