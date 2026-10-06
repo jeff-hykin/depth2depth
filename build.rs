@@ -26,11 +26,14 @@ fn fetch_model() {
             .expect("model.json is not JSON");
     let url = manifest["url"].as_str().expect("model.json: url");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    // TensorRT builds its engine from the ONNX; candle loads the safetensors.
-    let names: &[&str] = if std::env::var_os("CARGO_FEATURE_TENSORRT").is_some() {
-        &["da2_metric_hypersim_vits_364x448.onnx"]
+    // TensorRT builds its engine from the ONNX (on a Jetson, after trying the prebuilt one); candle loads the safetensors.
+    let prebuilt_engine = manifest["prebuilt_engine"].as_str().expect("model.json: prebuilt_engine");
+    let names: Vec<&str> = if std::env::var_os("CARGO_FEATURE_TENSORRT").is_none() {
+        vec!["dinov2_vits14.safetensors", "da2_head_vits.safetensors"]
+    } else if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64") {
+        vec!["da2_metric_hypersim_vits_364x448.onnx", prebuilt_engine]
     } else {
-        &["dinov2_vits14.safetensors", "da2_head_vits.safetensors"]
+        vec!["da2_metric_hypersim_vits_364x448.onnx"]
     };
     for name in names {
         let sha256 = manifest["files"][name].as_str().expect("model.json: files");
@@ -60,6 +63,8 @@ fn fetch_model() {
             panic!("{name}: sha256 {actual}, model.json pins {sha256}");
         }
     }
+    // src/lib.rs includes it by this name, which doesn't change with the TensorRT version.
+    println!("cargo:rustc-env=D2D_PREBUILT_ENGINE={}", out_dir.join(prebuilt_engine).display());
 }
 
 // curl rather than an HTTP crate: no TLS stack to compile, and nix never gets here.

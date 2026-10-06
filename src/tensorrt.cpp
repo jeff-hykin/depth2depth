@@ -75,13 +75,18 @@ int d2d_trt_version() {
     return getInferLibVersion();
 }
 
-// Load the engine cached at `engine_path`, or build it from the ONNX bytes and cache it there first; a cached
-// engine that won't load (another TensorRT, another GPU) is rebuilt. Null (and `error` set) on failure.
-void* d2d_trt_open(const void* onnx, size_t onnx_size, const char* engine_path, char* error, size_t error_length) {
+// Load `prebuilt` (a serialized engine, may be null), else the engine cached at `engine_path`, else build one from
+// the ONNX bytes and cache it there first. An engine that won't load (another TensorRT, another GPU) is passed over.
+// Null (and `error` set) on failure.
+void* d2d_trt_open(const void* onnx, size_t onnx_size, const void* prebuilt, size_t prebuilt_size, const char* engine_path,
+                   char* error, size_t error_length) {
     auto engine = std::make_unique<Engine>();
     engine->runtime.reset(nvinfer1::createInferRuntime(engine->logger));
+    if (prebuilt && prebuilt_size) {
+        engine->engine.reset(engine->runtime->deserializeCudaEngine(prebuilt, prebuilt_size));
+    }
     std::ifstream cached(engine_path, std::ios::binary);
-    if (cached) {
+    if (!engine->engine && cached) {
         std::vector<char> plan((std::istreambuf_iterator<char>(cached)), std::istreambuf_iterator<char>());
         engine->engine.reset(engine->runtime->deserializeCudaEngine(plan.data(), plan.size()));
     }

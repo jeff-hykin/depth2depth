@@ -33,6 +33,12 @@ mod embedded {
     ));
     #[cfg(feature = "tensorrt")]
     pub const ONNX_SHA256: &str = env!("D2D_SHA256_da2_metric_hypersim_vits_364x448_onnx");
+    /// An engine prebuilt on a Jetson Orin with the TensorRT nixpkgs pins (see model.json), so an Orin skips the
+    /// minutes-long build; anywhere it won't load, one is built from the ONNX instead.
+    #[cfg(all(feature = "tensorrt", target_arch = "aarch64"))]
+    pub static ENGINE: &[u8] = include_bytes!(env!("D2D_PREBUILT_ENGINE"));
+    #[cfg(all(feature = "tensorrt", not(target_arch = "aarch64")))]
+    pub static ENGINE: &[u8] = &[];
     #[cfg(not(feature = "tensorrt"))]
     pub static DINOV2: &[u8] =
         include_bytes!(concat!(env!("OUT_DIR"), "/dinov2_vits14.safetensors"));
@@ -189,12 +195,18 @@ impl Depth2Depth {
     pub fn new_tensorrt(onnx_path: &str, engine_path: &str, config: Config) -> Result<Self> {
         let onnx = std::fs::read(onnx_path)
             .map_err(|e| candle::Error::Msg(format!("{onnx_path}: {e}")))?;
-        Self::tensorrt_from_onnx(&onnx, engine_path, config)
+        Self::tensorrt_from_onnx(&onnx, &[], engine_path, config)
     }
 
     #[cfg(feature = "tensorrt")]
-    fn tensorrt_from_onnx(onnx: &[u8], engine_path: &str, mut config: Config) -> Result<Self> {
-        let engine = tensorrt::TrtDepth::open(onnx, engine_path).map_err(candle::Error::Msg)?;
+    fn tensorrt_from_onnx(
+        onnx: &[u8],
+        prebuilt: &[u8],
+        engine_path: &str,
+        mut config: Config,
+    ) -> Result<Self> {
+        let engine =
+            tensorrt::TrtDepth::open(onnx, prebuilt, engine_path).map_err(candle::Error::Msg)?;
         (config.model_h, config.model_w) = (engine.height, engine.width);
         Ok(Self {
             model: Model::TensorRt(engine),
@@ -204,8 +216,8 @@ impl Depth2Depth {
     }
 
     /// The model built into the library (feature `embedded-model`), on the best backend compiled in:
-    /// TensorRT with `tensorrt` (the engine is built on first use, minutes on an Orin, and cached
-    /// under `engine_cache_dir()`), else candle on CUDA / Metal in f16 when available, else CPU in f32.
+    /// TensorRT with `tensorrt` (on a Jetson Orin a prebuilt engine; elsewhere the engine is built on first
+    /// use, minutes, and cached under `engine_cache_dir()`), else candle on CUDA / Metal in f16 when available, else CPU in f32.
     #[cfg(feature = "embedded-model")]
     pub fn load(config: Config) -> Result<Self> {
         #[cfg(feature = "tensorrt")]
@@ -218,7 +230,12 @@ impl Depth2Depth {
                 &embedded::ONNX_SHA256[..12],
                 tensorrt::version()
             ));
-            Self::tensorrt_from_onnx(embedded::ONNX, &engine.to_string_lossy(), config)
+            Self::tensorrt_from_onnx(
+                embedded::ONNX,
+                embedded::ENGINE,
+                &engine.to_string_lossy(),
+                config,
+            )
         }
         #[cfg(not(feature = "tensorrt"))]
         {

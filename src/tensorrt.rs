@@ -13,6 +13,8 @@ extern "C" {
     fn d2d_trt_open(
         onnx: *const c_void,
         onnx_size: usize,
+        prebuilt: *const c_void,
+        prebuilt_size: usize,
         engine_path: *const c_char,
         error: *mut c_char,
         error_length: usize,
@@ -34,14 +36,17 @@ pub struct TrtDepth {
 }
 
 impl TrtDepth {
-    /// The engine cached at `engine_path`, built from `onnx` (the export's bytes) when it is missing or stale.
-    pub fn open(onnx: &[u8], engine_path: &str) -> Result<Self, String> {
+    /// `prebuilt` (a serialized engine; empty for none) when it loads here, else the engine cached at
+    /// `engine_path`, built from `onnx` (the export's bytes) when that is missing or stale.
+    pub fn open(onnx: &[u8], prebuilt: &[u8], engine_path: &str) -> Result<Self, String> {
         let engine = CString::new(engine_path).map_err(|e| e.to_string())?;
         let mut error = vec![0 as c_char; 512];
         let handle = unsafe {
             d2d_trt_open(
                 onnx.as_ptr().cast(),
                 onnx.len(),
+                prebuilt.as_ptr().cast(),
+                prebuilt.len(),
                 engine.as_ptr(),
                 error.as_mut_ptr(),
                 error.len(),

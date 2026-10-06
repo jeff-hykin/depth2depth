@@ -9,11 +9,12 @@
     outputs = { self, nixpkgs, flake-utils }:
         let
             manifest = builtins.fromJSON (builtins.readFile ./model.json);
-            # The model files pinned in model.json; the build sandbox has no network, so nix fetches them for build.rs.
-            model = pkgs: pkgs.linkFarm "depth2depth-model" (pkgs.lib.mapAttrsToList (name: sha256: {
+            # The model files pinned in model.json (those named, or all); the build sandbox has no network, so nix fetches them for build.rs.
+            model = pkgs: names: pkgs.linkFarm "depth2depth-model" (map (name: {
                 inherit name;
-                path = pkgs.fetchurl { url = "${manifest.url}/${name}"; inherit sha256; };
-            }) manifest.files);
+                path = pkgs.fetchurl { url = "${manifest.url}/${name}"; sha256 = manifest.files.${name}; };
+            }) names);
+            allFiles = builtins.attrNames manifest.files;
         in
         {
             # For a crate2nix (buildRustCrate) build that depends on this crate:
@@ -22,6 +23,11 @@
             lib.crateOverride = { pkgs, cudaPackages ? pkgs.cudaPackages_12_6 }: attrs:
                 let
                     tensorrt = builtins.elem "tensorrt" (attrs.features or []);
+                    # The same choice build.rs makes: a Jetson gets the ONNX and the prebuilt engine, other TensorRT the ONNX, candle the safetensors.
+                    names =
+                        if !tensorrt then [ "dinov2_vits14.safetensors" "da2_head_vits.safetensors" ]
+                        else [ "da2_metric_hypersim_vits_364x448.onnx" ]
+                            ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isAarch64 manifest.prebuilt_engine;
                     # build.rs wants CUDA_HOME/{include,lib64} and TENSORRT_ROOT/{include,lib}; nvcc carries crt/ in CUDA 12.6.
                     cudaHome = pkgs.symlinkJoin {
                         name = "cuda-home";
@@ -30,7 +36,7 @@
                     };
                     tensorrtRoot = pkgs.symlinkJoin { name = "tensorrt-root"; paths = cudaPackages.tensorrt.all; };
                 in
-                { DEPTH2DEPTH_MODEL_DIR = model pkgs; }
+                { DEPTH2DEPTH_MODEL_DIR = model pkgs names; }
                 // pkgs.lib.optionalAttrs tensorrt { CUDA_HOME = cudaHome; TENSORRT_ROOT = tensorrtRoot; };
         }
         // flake-utils.lib.eachDefaultSystem (system:
@@ -38,7 +44,7 @@
                 pkgs = import nixpkgs { inherit system; };
             in
             {
-                packages.model = model pkgs;
+                packages.model = model pkgs allFiles;
                 devShells.default = pkgs.mkShell {
                     packages = with pkgs; [
                         rustc
@@ -48,7 +54,7 @@
                         pkg-config
                         ffmpeg
                     ];
-                    DEPTH2DEPTH_MODEL_DIR = model pkgs;
+                    DEPTH2DEPTH_MODEL_DIR = model pkgs allFiles;
                     # CUDA/cuDNN intentionally come from the host system
                     # (JetPack on Jetson, the NVIDIA toolkit elsewhere).
                     shellHook = ''
