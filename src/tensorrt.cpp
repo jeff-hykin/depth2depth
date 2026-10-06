@@ -45,13 +45,13 @@ void fail(char* error, size_t length, const std::string& message) {
 }
 
 // Parse the ONNX and build an fp16 engine; empty on failure.
-std::vector<char> build(Logger& logger, const char* onnx_path, char* error, size_t error_length) {
+std::vector<char> build(Logger& logger, const void* onnx, size_t onnx_size, char* error, size_t error_length) {
     std::unique_ptr<nvinfer1::IBuilder> builder(nvinfer1::createInferBuilder(logger));
     const auto explicit_batch = 1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
     std::unique_ptr<nvinfer1::INetworkDefinition> network(builder->createNetworkV2(explicit_batch));
     std::unique_ptr<nvonnxparser::IParser> parser(nvonnxparser::createParser(*network, logger));
-    if (!parser->parseFromFile(onnx_path, static_cast<int>(nvinfer1::ILogger::Severity::kWARNING))) {
-        fail(error, error_length, std::string("could not parse ") + onnx_path);
+    if (!parser->parse(onnx, onnx_size)) {
+        fail(error, error_length, "could not parse the ONNX model");
         return {};
     }
     std::unique_ptr<nvinfer1::IBuilderConfig> config(builder->createBuilderConfig());
@@ -70,23 +70,33 @@ std::vector<char> build(Logger& logger, const char* onnx_path, char* error, size
 
 extern "C" {
 
-// Load `engine_path`, or build it from `onnx_path` and save it there first. Null (and `error` set) on failure.
-void* d2d_trt_open(const char* onnx_path, const char* engine_path, char* error, size_t error_length) {
+// The TensorRT version, as major*10000 + minor*100 + patch; engines only load in the version that built them.
+int d2d_trt_version() {
+    return getInferLibVersion();
+}
+
+// Load the engine cached at `engine_path`, or build it from the ONNX bytes and cache it there first; a cached
+// engine that won't load (another TensorRT, another GPU) is rebuilt. Null (and `error` set) on failure.
+void* d2d_trt_open(const void* onnx, size_t onnx_size, const char* engine_path, char* error, size_t error_length) {
     auto engine = std::make_unique<Engine>();
-    std::vector<char> plan;
+    engine->runtime.reset(nvinfer1::createInferRuntime(engine->logger));
     std::ifstream cached(engine_path, std::ios::binary);
     if (cached) {
-        plan.assign(std::istreambuf_iterator<char>(cached), std::istreambuf_iterator<char>());
-    } else {
-        plan = build(engine->logger, onnx_path, error, error_length);
-        if (plan.empty()) return nullptr;
-        std::ofstream(engine_path, std::ios::binary).write(plan.data(), static_cast<std::streamsize>(plan.size()));
+        std::vector<char> plan((std::istreambuf_iterator<char>(cached)), std::istreambuf_iterator<char>());
+        engine->engine.reset(engine->runtime->deserializeCudaEngine(plan.data(), plan.size()));
     }
-    engine->runtime.reset(nvinfer1::createInferRuntime(engine->logger));
-    engine->engine.reset(engine->runtime->deserializeCudaEngine(plan.data(), plan.size()));
     if (!engine->engine) {
-        fail(error, error_length, std::string("could not load the engine ") + engine_path + " (delete it to rebuild)");
-        return nullptr;
+        std::vector<char> plan = build(engine->logger, onnx, onnx_size, error, error_length);
+        if (plan.empty()) return nullptr;
+        // Written aside then renamed, so a process killed mid-write leaves no half an engine behind.
+        const std::string partial = std::string(engine_path) + ".part";
+        std::ofstream(partial, std::ios::binary).write(plan.data(), static_cast<std::streamsize>(plan.size()));
+        std::rename(partial.c_str(), engine_path);
+        engine->engine.reset(engine->runtime->deserializeCudaEngine(plan.data(), plan.size()));
+        if (!engine->engine) {
+            fail(error, error_length, "TensorRT could not load the engine it just built");
+            return nullptr;
+        }
     }
     engine->context.reset(engine->engine->createExecutionContext());
     if (engine->engine->getNbIOTensors() != 2) {

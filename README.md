@@ -30,15 +30,9 @@ Over a clip — color, raw depth, fused, side by side:
 
 ```rust
 use depth2depth::{Config, Depth2Depth};
-use candle_core::{Device, DType};
 
-let mut d2d = Depth2Depth::new(
-    "dinov2_vits14.safetensors",
-    "da2_head_vits.safetensors",
-    Device::cuda_if_available(0)?,
-    DType::F16,
-    Config::default(),
-)?;
+// The model is built into the library: TensorRT with the `tensorrt` feature, else CUDA / Metal / CPU.
+let mut d2d = Depth2Depth::load(Config::default())?;
 
 // rgb: HxWx3 u8, raw_depth_m: HxW f32 meters (0 / out-of-range = hole)
 let fusion = d2d.fuse(&rgb, &raw_depth_m, height, width)?;
@@ -51,7 +45,7 @@ let fusion = d2d.fuse(&rgb, &raw_depth_m, height, width)?;
 
 Pure Rust, no Python and no ONNX runtime at inference time. Inference runs on [candle](https://github.com/huggingface/candle), so the GPU backend is a cargo feature: `cuda` / `cudnn` (NVIDIA, incl. Jetson), `metal` (Apple), or nothing for CPU.
 
-On a Jetson, candle's CUDA path is bound by kernel launches (190 ms a 364x448 frame on an Orin), so there is also a `tensorrt` feature: `Depth2Depth::new_tensorrt(onnx, engine_cache, config)` builds an fp16 TensorRT engine from an ONNX export of the model once (minutes), caches it, and runs a frame in 17 ms. It needs CUDA and TensorRT installed (JetPack has both; `CUDA_HOME` / `TENSORRT_ROOT` point elsewhere).
+On a Jetson, candle's CUDA path is bound by kernel launches (190 ms a 364x448 frame on an Orin), so there is also a `tensorrt` feature: `Depth2Depth::load` then builds an fp16 TensorRT engine from an ONNX export of the model once (minutes), caches it under `~/.cache/depth2depth` (`$DEPTH2DEPTH_CACHE_DIR` overrides), and runs a frame in 17 ms. An engine left by another TensorRT version or GPU is rebuilt. It needs CUDA and TensorRT installed (JetPack has both; `CUDA_HOME` / `TENSORRT_ROOT` point elsewhere).
 
 ## From a lidar instead of a depth image
 
@@ -116,7 +110,17 @@ Nothing is smoothed or inpainted into place: real sensor geometry survives byte-
 
 ## Model weights
 
-The crate loads two safetensors files converted from the official Depth Anything V2 metric checkpoint (Hypersim indoor, vit-small, `max_depth = 20`):
+The default `embedded-model` feature builds the model into the library. `model.json` pins the files by sha256 at a fixed commit of [CodeChefJeff/depth2depth-vits-hypersim](https://huggingface.co/CodeChefJeff/depth2depth-vits-hypersim); `build.rs` downloads them (with `curl`), or copies them from `$DEPTH2DEPTH_MODEL_DIR` when set. A `tensorrt` build embeds only the ONNX export, any other only the two safetensors files.
+
+Nix builds have no network, so the flake fetches the files instead. A crate2nix build that depends on depth2depth applies the flake's override, which also supplies CUDA and TensorRT for the `tensorrt` feature:
+
+```nix
+defaultCrateOverrides = pkgs.defaultCrateOverrides // {
+    depth2depth = depth2depth.lib.crateOverride { inherit pkgs; };
+};
+```
+
+Without the feature, `Depth2Depth::new` loads the two safetensors files from paths. They are converted from the official Depth Anything V2 metric checkpoint (Hypersim indoor, vit-small, `max_depth = 20`):
 
 ```sh
 # needs: pip install torch safetensors

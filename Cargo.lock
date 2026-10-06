@@ -451,6 +451,8 @@ dependencies = [
  "image",
  "kiddo",
  "rayon",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

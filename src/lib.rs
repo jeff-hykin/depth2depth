@@ -6,9 +6,10 @@
 //! outliers. Raw depth is kept wherever it agrees with the aligned prediction,
 //! so sensor geometry survives untouched.
 //!
-//! Model files: see `tools/convert_weights.py` for converting the official
-//! `depth_anything_v2_metric_hypersim_vits.pth` into the two safetensors files
-//! this crate loads.
+//! Model files: with the default `embedded-model` feature they are built into the library
+//! (pinned by sha256 in model.json) and [`Depth2Depth::load`] needs nothing else. Without it,
+//! see `tools/convert_weights.py` for converting the official
+//! `depth_anything_v2_metric_hypersim_vits.pth` into the two safetensors files [`Depth2Depth::new`] loads.
 
 pub mod calibrate;
 pub mod cloud;
@@ -21,6 +22,33 @@ pub use calibrate::{Anchor, Calibrated, Calibration, CalibrationConfig};
 pub use cloud::{CloudOptions, Pinhole};
 
 pub use candle;
+
+/// The model files pinned in model.json, put in OUT_DIR by build.rs.
+#[cfg(feature = "embedded-model")]
+mod embedded {
+    #[cfg(feature = "tensorrt")]
+    pub static ONNX: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/da2_metric_hypersim_vits_364x448.onnx"));
+    #[cfg(feature = "tensorrt")]
+    pub const ONNX_SHA256: &str = env!("D2D_SHA256_da2_metric_hypersim_vits_364x448_onnx");
+    #[cfg(not(feature = "tensorrt"))]
+    pub static DINOV2: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dinov2_vits14.safetensors"));
+    #[cfg(not(feature = "tensorrt"))]
+    pub static HEAD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/da2_head_vits.safetensors"));
+}
+
+/// Where [`Depth2Depth::load`] caches TensorRT engines: `$DEPTH2DEPTH_CACHE_DIR`, else
+/// `$XDG_CACHE_HOME/depth2depth`, else `~/.cache/depth2depth`.
+pub fn engine_cache_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    let env = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
+    env("DEPTH2DEPTH_CACHE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| env("XDG_CACHE_HOME").map(|cache| PathBuf::from(cache).join("depth2depth")))
+        .unwrap_or_else(|| {
+            PathBuf::from(env("HOME").unwrap_or_else(|| ".".into())).join(".cache/depth2depth")
+        })
+}
 
 use std::sync::Arc;
 
@@ -123,9 +151,19 @@ impl Depth2Depth {
         let dino_vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&[dinov2_safetensors], dtype, &device)?
         };
-        let dino = dinov2::vit_small(dino_vb)?;
         let head_vb =
             unsafe { VarBuilder::from_mmaped_safetensors(&[head_safetensors], dtype, &device)? };
+        Self::from_safetensors(dino_vb, head_vb, device, dtype, config)
+    }
+
+    fn from_safetensors(
+        dino_vb: VarBuilder,
+        head_vb: VarBuilder,
+        device: Device,
+        dtype: DType,
+        config: Config,
+    ) -> Result<Self> {
+        let dino = dinov2::vit_small(dino_vb)?;
         let da2_config = da2::DepthAnythingV2Config::vit_small_metric(
             config.model_h,
             config.model_w,
@@ -146,14 +184,57 @@ impl Depth2Depth {
     /// The model as a TensorRT engine built from its ONNX export (see [`tensorrt`]); the
     /// model input size is the export's, whatever `config` says.
     #[cfg(feature = "tensorrt")]
-    pub fn new_tensorrt(onnx_path: &str, engine_path: &str, mut config: Config) -> Result<Self> {
-        let engine = tensorrt::TrtDepth::open(onnx_path, engine_path).map_err(candle::Error::Msg)?;
+    pub fn new_tensorrt(onnx_path: &str, engine_path: &str, config: Config) -> Result<Self> {
+        let onnx = std::fs::read(onnx_path).map_err(|e| candle::Error::Msg(format!("{onnx_path}: {e}")))?;
+        Self::tensorrt_from_onnx(&onnx, engine_path, config)
+    }
+
+    #[cfg(feature = "tensorrt")]
+    fn tensorrt_from_onnx(onnx: &[u8], engine_path: &str, mut config: Config) -> Result<Self> {
+        let engine = tensorrt::TrtDepth::open(onnx, engine_path).map_err(candle::Error::Msg)?;
         (config.model_h, config.model_w) = (engine.height, engine.width);
         Ok(Self {
             model: Model::TensorRt(engine),
             config,
             ema: None,
         })
+    }
+
+    /// The model built into the library (feature `embedded-model`), on the best backend compiled in:
+    /// TensorRT with `tensorrt` (the engine is built on first use, minutes on an Orin, and cached
+    /// under `engine_cache_dir()`), else candle on CUDA / Metal in f16 when available, else CPU in f32.
+    #[cfg(feature = "embedded-model")]
+    pub fn load(config: Config) -> Result<Self> {
+        #[cfg(feature = "tensorrt")]
+        {
+            let directory = engine_cache_dir();
+            std::fs::create_dir_all(&directory)
+                .map_err(|e| candle::Error::Msg(format!("{}: {e}", directory.display())))?;
+            let engine = directory.join(format!(
+                "da2_metric_hypersim_vits_364x448_{}_trt{}.engine",
+                &embedded::ONNX_SHA256[..12],
+                tensorrt::version()
+            ));
+            Self::tensorrt_from_onnx(embedded::ONNX, &engine.to_string_lossy(), config)
+        }
+        #[cfg(not(feature = "tensorrt"))]
+        {
+            #[cfg(feature = "cuda")]
+            let device = Device::new_cuda(0).unwrap_or(Device::Cpu);
+            #[cfg(all(feature = "metal", not(feature = "cuda")))]
+            let device = Device::new_metal(0).unwrap_or(Device::Cpu);
+            #[cfg(not(any(feature = "cuda", feature = "metal")))]
+            let device = Device::Cpu;
+            // candle's CPU f16 is ~3x slower than its f32.
+            let dtype = if device.is_cpu() { DType::F32 } else { DType::F16 };
+            Self::from_safetensors(
+                VarBuilder::from_slice_safetensors(embedded::DINOV2, dtype, &device)?,
+                VarBuilder::from_slice_safetensors(embedded::HEAD, dtype, &device)?,
+                device,
+                dtype,
+                config,
+            )
+        }
     }
 
     /// Reset the temporal affine smoothing (call on scene cuts / recording seams).
