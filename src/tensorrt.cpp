@@ -34,6 +34,10 @@ struct Engine {
     int width = 0;
 
     ~Engine() {
+        // TensorRT before the stream and buffers it uses (else it fails to destroy its CUDA events).
+        context.reset();
+        engine.reset();
+        runtime.reset();
         if (input) cudaFree(input);
         if (output) cudaFree(output);
         if (stream) cudaStreamDestroy(stream);
