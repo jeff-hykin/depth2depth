@@ -6,7 +6,7 @@
 //! longer loads is rebuilt.
 
 use std::ffi::{c_char, c_int, c_void, CString};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, Once, Weak};
 
 extern "C" {
     fn d2d_trt_version() -> c_int;
@@ -22,6 +22,7 @@ extern "C" {
     fn d2d_trt_input_size(handle: *mut c_void, height: *mut c_int, width: *mut c_int);
     fn d2d_trt_infer(handle: *mut c_void, input: *const f32, output: *mut f32) -> c_int;
     fn d2d_trt_close(handle: *mut c_void);
+    fn atexit(callback: extern "C" fn()) -> c_int;
 }
 
 struct Handle(*mut c_void);
@@ -29,8 +30,26 @@ struct Handle(*mut c_void);
 // The engine is only touched under the mutex, one inference at a time.
 unsafe impl Send for Handle {}
 
+/// Every open engine, for `close_all_at_exit`.
+static OPEN: Mutex<Vec<Weak<Mutex<Handle>>>> = Mutex::new(Vec::new());
+static REGISTER_AT_EXIT: Once = Once::new();
+
+/// A process that exits while some thread still owns an engine never drops it, and TensorRT then tears it down
+/// after CUDA has unloaded, logging an error. Exit handlers run newest first, so this one, registered once CUDA is
+/// up, frees every engine still open while CUDA is still there (after any inference in flight).
+extern "C" fn close_all_at_exit() {
+    let open = std::mem::take(&mut *OPEN.lock().unwrap_or_else(|e| e.into_inner()));
+    for engine in open.iter().filter_map(Weak::upgrade) {
+        let mut handle = engine.lock().unwrap_or_else(|e| e.into_inner());
+        if !handle.0.is_null() {
+            unsafe { d2d_trt_close(handle.0) };
+            handle.0 = std::ptr::null_mut();
+        }
+    }
+}
+
 pub struct TrtDepth {
-    handle: Mutex<Handle>,
+    handle: Arc<Mutex<Handle>>,
     pub height: usize,
     pub width: usize,
 }
@@ -58,8 +77,16 @@ impl TrtDepth {
         }
         let (mut height, mut width) = (0, 0);
         unsafe { d2d_trt_input_size(handle, &mut height, &mut width) };
+        let handle = Arc::new(Mutex::new(Handle(handle)));
+        let mut open = OPEN.lock().unwrap();
+        open.retain(|engine| engine.strong_count() > 0);
+        open.push(Arc::downgrade(&handle));
+        drop(open);
+        REGISTER_AT_EXIT.call_once(|| unsafe {
+            atexit(close_all_at_exit);
+        });
         Ok(Self {
-            handle: Mutex::new(Handle(handle)),
+            handle,
             height: height as usize,
             width: width as usize,
         })
@@ -74,6 +101,9 @@ impl TrtDepth {
         );
         let mut output = vec![0f32; self.height * self.width];
         let handle = self.handle.lock().unwrap();
+        if handle.0.is_null() {
+            return Err("TensorRT engine already closed (the process is exiting)".into());
+        }
         match unsafe { d2d_trt_infer(handle.0, input.as_ptr(), output.as_mut_ptr()) } {
             0 => Ok(output),
             code => Err(format!("TensorRT inference failed (step {code})")),
@@ -88,6 +118,10 @@ pub fn version() -> i32 {
 
 impl Drop for TrtDepth {
     fn drop(&mut self) {
-        unsafe { d2d_trt_close(self.handle.get_mut().unwrap().0) };
+        let mut handle = self.handle.lock().unwrap_or_else(|e| e.into_inner());
+        if !handle.0.is_null() {
+            unsafe { d2d_trt_close(handle.0) };
+            handle.0 = std::ptr::null_mut();
+        }
     }
 }
