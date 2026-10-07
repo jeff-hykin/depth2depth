@@ -16,6 +16,8 @@ extern "C" {
         prebuilt: *const c_void,
         prebuilt_size: usize,
         engine_path: *const c_char,
+        height: c_int,
+        width: c_int,
         error: *mut c_char,
         error_length: usize,
     ) -> *mut c_void;
@@ -55,9 +57,16 @@ pub struct TrtDepth {
 }
 
 impl TrtDepth {
-    /// `prebuilt` (a serialized engine; empty for none) when it loads here, else the engine cached at
-    /// `engine_path`, built from `onnx` (the export's bytes) when that is missing or stale.
-    pub fn open(onnx: &[u8], prebuilt: &[u8], engine_path: &str) -> Result<Self, String> {
+    /// An engine for a `height` x `width` input (multiples of 14): `prebuilt` (a serialized engine; empty for none)
+    /// when it loads here and is for that size, else the one cached at `engine_path`, built from `onnx` (the
+    /// export's bytes) when that is missing, stale or for another size.
+    pub fn open(
+        onnx: &[u8],
+        prebuilt: &[u8],
+        engine_path: &str,
+        height: usize,
+        width: usize,
+    ) -> Result<Self, String> {
         let engine = CString::new(engine_path).map_err(|e| e.to_string())?;
         let mut error = vec![0 as c_char; 512];
         let handle = unsafe {
@@ -67,6 +76,8 @@ impl TrtDepth {
                 prebuilt.as_ptr().cast(),
                 prebuilt.len(),
                 engine.as_ptr(),
+                height as c_int,
+                width as c_int,
                 error.as_mut_ptr(),
                 error.len(),
             )

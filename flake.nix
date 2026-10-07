@@ -23,11 +23,12 @@
             lib.crateOverride = { pkgs, cudaPackages ? pkgs.cudaPackages_12_6 }: attrs:
                 let
                     tensorrt = builtins.elem "tensorrt" (attrs.features or []);
-                    # The same choice build.rs makes: a Jetson gets the ONNX and the prebuilt engine, other TensorRT the ONNX, candle the safetensors.
+                    # The same choice build.rs makes: TensorRT gets the ONNX and this architecture's prebuilt engine (if any),
+                    # candle the safetensors.
+                    prebuilt = manifest.prebuilt_engines.${pkgs.stdenv.hostPlatform.parsed.cpu.name} or null;
                     names =
                         if !tensorrt then [ "dinov2_vits14.safetensors" "da2_head_vits.safetensors" ]
-                        else [ "da2_metric_hypersim_vits_364x448.onnx" ]
-                            ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isAarch64 manifest.prebuilt_engine;
+                        else [ "da2_metric_hypersim_vits.onnx" ] ++ pkgs.lib.optional (prebuilt != null) prebuilt;
                     # build.rs wants CUDA_HOME/{include,lib64} and TENSORRT_ROOT/{include,lib}; nvcc carries crt/ in CUDA 12.6.
                     cudaHome = pkgs.symlinkJoin {
                         name = "cuda-home";

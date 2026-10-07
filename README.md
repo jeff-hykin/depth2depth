@@ -45,7 +45,7 @@ let fusion = d2d.fuse(&rgb, &raw_depth_m, height, width)?;
 
 Pure Rust, no Python and no ONNX runtime at inference time. Inference runs on [candle](https://github.com/huggingface/candle), so the GPU backend is a cargo feature: `cuda` / `cudnn` (NVIDIA, incl. Jetson), `metal` (Apple), or nothing for CPU.
 
-On a Jetson, candle's CUDA path is bound by kernel launches (190 ms a 364x448 frame on an Orin), so there is also a `tensorrt` feature: `Depth2Depth::load` then builds an fp16 TensorRT engine from an ONNX export of the model once (minutes), caches it under `~/.cache/depth2depth` (`$DEPTH2DEPTH_CACHE_DIR` overrides), and runs a frame in 17 ms. An engine left by another TensorRT version or GPU is rebuilt. It needs CUDA and TensorRT installed (JetPack has both; `CUDA_HOME` / `TENSORRT_ROOT` point elsewhere).
+On a Jetson, candle's CUDA path is bound by kernel launches (190 ms a 364x448 frame on an Orin), so there is also a `tensorrt` feature: `Depth2Depth::load` then builds an fp16 TensorRT engine for `Config`'s input size from an ONNX export of the model (which takes any multiple of 14) once (minutes), caches it under `~/.cache/depth2depth` (`$DEPTH2DEPTH_CACHE_DIR` overrides), and runs a frame in 17 ms. An engine left by another TensorRT version or GPU is rebuilt. Engines for a 448x560 input are prebuilt for a Jetson AGX Orin (TensorRT 10.7) and the RTX 50-series (TensorRT 10.16) and built into the library, so those skip the build; `cargo run --release --features tensorrt --example engine -- <height> <width>` builds one ahead of time anywhere else. It needs CUDA and TensorRT installed (JetPack has both; `CUDA_HOME` / `TENSORRT_ROOT` point elsewhere).
 
 ## From a lidar instead of a depth image
 

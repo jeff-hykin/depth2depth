@@ -1,10 +1,14 @@
 {
-    "url": "https://huggingface.co/CodeChefJeff/depth2depth-vits-hypersim/resolve/99b7fe50f0aade10cb9e6c36e3fb8774cf58027a",
-    "prebuilt_engine": "da2_metric_hypersim_vits_364x448_trt100700_sm87.engine",
+    "url": "https://huggingface.co/CodeChefJeff/depth2depth-vits-hypersim/resolve/c7f42ff8331a5eb77521a234858cdd93252badc3",
+    "prebuilt_engines": {
+        "aarch64": "da2_metric_hypersim_vits_448x560_trt100700_sm87.engine",
+        "x86_64": "da2_metric_hypersim_vits_448x560_trt101601_sm120.engine"
+    },
     "files": {
         "dinov2_vits14.safetensors": "cd0ce9e13402978685c13cbfab905493dd947c15308ba21c74e21df1600f0075",
         "da2_head_vits.safetensors": "4f9f283b1355547f8871312ad2279088e89dbe280b9232b0cee056812e6bc786",
-        "da2_metric_hypersim_vits_364x448.onnx": "a7e55312dc399f19f619f349434c29c21b470043826b8223deb48d2ef41f3181",
-        "da2_metric_hypersim_vits_364x448_trt100700_sm87.engine": "64fab3e772a7d7cb8d5728d84b2e497db157065b97db5a33e72701a07e4ef6fe"
+        "da2_metric_hypersim_vits.onnx": "beaeaeacdb66fc067fc82dd30463b255549367dc251d6cdff3db31bc3edf0750",
+        "da2_metric_hypersim_vits_448x560_trt100700_sm87.engine": "be974849b8704bc795254e248610a0408371cbdafdab29e2411953b9b0e2b4f9",
+        "da2_metric_hypersim_vits_448x560_trt101601_sm120.engine": "7b9defa44791e09faac986b8163b6fd7c822b78a6f02dc24a4d6c11d541e9147"
     }
 }

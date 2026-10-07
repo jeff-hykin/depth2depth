@@ -26,14 +26,14 @@ fn fetch_model() {
             .expect("model.json is not JSON");
     let url = manifest["url"].as_str().expect("model.json: url");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    // TensorRT builds its engine from the ONNX (on a Jetson, after trying the prebuilt one); candle loads the safetensors.
-    let prebuilt_engine = manifest["prebuilt_engine"].as_str().expect("model.json: prebuilt_engine");
+    // TensorRT builds its engine from the ONNX, after trying the engine prebuilt for this architecture's GPU (if any);
+    // candle loads the safetensors.
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+    let prebuilt_engine = manifest["prebuilt_engines"][&arch].as_str();
     let names: Vec<&str> = if std::env::var_os("CARGO_FEATURE_TENSORRT").is_none() {
         vec!["dinov2_vits14.safetensors", "da2_head_vits.safetensors"]
-    } else if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64") {
-        vec!["da2_metric_hypersim_vits_364x448.onnx", prebuilt_engine]
     } else {
-        vec!["da2_metric_hypersim_vits_364x448.onnx"]
+        ["da2_metric_hypersim_vits.onnx"].into_iter().chain(prebuilt_engine).collect()
     };
     for name in names {
         let sha256 = manifest["files"][name].as_str().expect("model.json: files");
@@ -63,8 +63,16 @@ fn fetch_model() {
             panic!("{name}: sha256 {actual}, model.json pins {sha256}");
         }
     }
-    // src/lib.rs includes it by this name, which doesn't change with the TensorRT version.
-    println!("cargo:rustc-env=D2D_PREBUILT_ENGINE={}", out_dir.join(prebuilt_engine).display());
+    // src/lib.rs includes it by this name, which doesn't change with the TensorRT version; empty when there is none.
+    let engine = match prebuilt_engine {
+        Some(name) => out_dir.join(name),
+        None => {
+            let none = out_dir.join("no_prebuilt.engine");
+            std::fs::write(&none, b"").unwrap();
+            none
+        }
+    };
+    println!("cargo:rustc-env=D2D_PREBUILT_ENGINE={}", engine.display());
 }
 
 // curl rather than an HTTP crate: no TLS stack to compile, and nix never gets here.
