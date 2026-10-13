@@ -72,6 +72,8 @@ A single affine fit is not enough here: on a robot's head camera the floor near 
 
 Lidar points the camera cannot see (behind the edge of a nearer object, from the camera's viewpoint) are dropped before either. On six R1 Pro drives, with a fifth of each Mid-360 scan held out: median error 0.04–0.07 m, and 0.1–4% of the cloud more than 0.3 m under the floor, against 7–16% for the single affine fit. `Fusion::points` does the same cloud output for `fuse`.
 
+Calibration time follows the number of lidar pixels and the number of pixels calibrated, so for a decimated cloud, call the steps yourself: `cloud::thin_anchors` keeps the nearest lidar pixel per block, and `Calibration::apply_for_cloud` calibrates only the pixels the `CloudOptions` will turn into points (on an Orin, 142 → 73 ms a frame).
+
 ## The raw depth is mostly missing
 
 Stereo depth needs texture. Blank walls, dark corners, shiny floors, thin chair legs and anything past the projector's useful range come back as nothing at all — and what does come back is speckled with single-pixel dropouts and torn object edges that flicker frame to frame.
