@@ -90,6 +90,23 @@ pub fn visible_anchors(
     anchors
 }
 
+/// The nearest anchor in each `step` x `step` pixel block (1 keeps them all): calibration time
+/// follows the anchor count, and a dense lidar history gives far more than the fit needs.
+pub fn thin_anchors(anchors: Vec<Anchor>, step: usize, height: usize, width: usize) -> Vec<Anchor> {
+    if step <= 1 {
+        return anchors;
+    }
+    let columns = width.div_ceil(step);
+    let mut nearest: Vec<Option<Anchor>> = vec![None; height.div_ceil(step) * columns];
+    for anchor in anchors {
+        let held = &mut nearest[(anchor.v as usize / step) * columns + anchor.u as usize / step];
+        if held.is_none_or(|held| anchor.z < held.z) {
+            *held = Some(anchor);
+        }
+    }
+    nearest.into_iter().flatten().collect()
+}
+
 /// Which pixels become points, and how many. Every crop runs before any decimation,
 /// so the point budget is spent only on what survives the crop.
 #[derive(Clone, Debug, PartialEq)]
@@ -173,6 +190,21 @@ fn thin(points: Vec<[f32; 3]>, budget: usize) -> Vec<[f32; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thinning_keeps_the_nearest_anchor_of_each_block() {
+        let anchor = |u: f32, v: f32, z: f32| Anchor { u, v, z };
+        let anchors = vec![
+            anchor(0.0, 0.0, 3.0),
+            anchor(3.0, 3.0, 2.0),
+            anchor(4.0, 0.0, 5.0),
+        ];
+        assert_eq!(
+            thin_anchors(anchors.clone(), 4, 8, 8),
+            vec![anchor(3.0, 3.0, 2.0), anchor(4.0, 0.0, 5.0)]
+        );
+        assert_eq!(thin_anchors(anchors.clone(), 1, 8, 8), anchors);
+    }
 
     const CAMERA: Pinhole = Pinhole {
         fx: 100.0,
